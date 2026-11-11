@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VR Overview Model</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.147/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.147/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    html, body, #cesiumContainer { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    #toolbar { position: absolute; top: 10px; left: 10px; z-index: 1; background: rgba(38,38,38,0.85);
+      color: #fff; padding: 8px; border-radius: 4px; font-family: sans-serif; }
+    .infoPanel { margin-top: 8px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="toolbar">
+    <select class="cesium-button" id="dropdown">
+      <option value="0">Color By Building Material</option>
+      <option value="1">Color By Distance To Selected Location</option>
+      <option value="2">Highlight Residential Buildings</option>
+      <option value="3">Show Office Buildings Only</option>
+      <option value="4">Show Apartment Buildings Only</option>
+    </select>
+    <table class="infoPanel"><tbody><tr>
+      <td>Click on a building to select as the central location</td>
+    </tr></tbody></table>
+  </div>
+
+  <script type="module">
+    Cesium.Ion.defaultAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6Ink1bDIxUUV3SE1QWS1LZUkiLCJqdGkiOiI4Mzc2ZGY0My03MjIzLTQyYzgtYTJjNi1hODZjMzkwYWYzM2IiLCJpZCI6NTQ2OTM4LCJzdWIiOiJOaGF0LVF1YW5nIE5ndXllbiIsImlzcyI6Imh0dHBzOi8vYXBpLmNlc2l1bS5jb20iLCJhdWQiOiJHaXRodWJfVlIiLCJpYXQiOjE3OTQ0MDQzNjJ9.7XW7SA_Zmn0RHbX-UOBxc1VlOvJDEm1iRQ3ht_XL2hk";
+
+    const viewer = new Cesium.Viewer("cesiumContainer", {
+      terrain: Cesium.Terrain.fromWorldTerrain(),
+    });
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+    // Gỡ hành vi double-click mặc định của Cesium (zoom/track entity)
+    // để không xung đột với việc double-click mở link VR
+    viewer.screenSpaceEventHandler.removeInputAction(
+      Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK,
+    );
+
+    // Add Cesium OSM buildings to the scene as our example 3D Tileset.
+    const osmBuildingsTileset = await Cesium.createOsmBuildingsAsync();
+    viewer.scene.primitives.add(osmBuildingsTileset);
+
+    // ---------------------------------------------------------------------------
+    // Dữ liệu tòa nhà TTC (lấy từ hộp thông tin trong ảnh)
+    // ---------------------------------------------------------------------------
+    const TTC = {
+      elementType: "way",
+      elementId: 791993480,
+      "cesium#estimatedHeight": 60,
+      "cesium#longitude": 106.66468,
+      "cesium#latitude": 10.8001,
+      building: "yes",
+      "building:levels": 20,
+      name: "Tòa nhà TTC",
+      "addr:city": "Thành phố Hồ Chí Minh",
+      "addr:housenumber": "253",
+      "addr:street": "Hoàng Văn Thụ",
+      "addr:district": "Tân Bình",
+      "addr:subdistrict": "Phường 2",
+    };
+
+    // Link VR: chỉ mở khi double-click vào tòa nhà TTC
+    const TTC_LINK =
+      "https://virtual-reality-model.onrender.com/app/viewer.html?projectId=SHM-STR-QUANG&v=89cba60";
+
+    // Đưa camera tới tòa nhà TTC
+    function focusOnBuilding(building) {
+      const center = Cesium.Cartesian3.fromDegrees(
+        building["cesium#longitude"],
+        building["cesium#latitude"],
+        building["cesium#estimatedHeight"] / 2, // nhắm vào giữa thân tòa nhà
+      );
+      viewer.camera.lookAt(
+        center,
+        new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(20), // heading: hướng nhìn
+          Cesium.Math.toRadians(-35), // pitch: nghiêng xuống 35 độ
+          300, // range: khoảng cách tới tòa nhà (mét)
+        ),
+      );
+      // Nhả camera khỏi chế độ "khóa vào tâm" để người dùng tự xoay/di chuyển được
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Mở link VR: chỉ có đúng 1 cách là mở ngay trong tab hiện tại
+    // ---------------------------------------------------------------------------
+    function openTTCLink() {
+      window.location.href = TTC_LINK;
+    }
+
+    // Hiển thị hộp thông tin (InfoBox) của tòa nhà, không có link
+    function showBuildingInfoBox(building) {
+      const rows = Object.entries(building)
+        .map(([key, value]) => `<tr><th>${key}</th><td>${value}</td></tr>`)
+        .join("");
+
+      viewer.selectedEntity = new Cesium.Entity({
+        name: building.name, // tiêu đề của hộp thông tin
+        description: `<table class="cesium-infoBox-defaultTable"><tbody>${rows}</tbody></table>`,
+      });
+    }
+
+    focusOnBuilding(TTC);
+    showBuildingInfoBox(TTC);
+
+    // ---------------------------------------------------------------------------
+    // Double-click (nháy đúp chuột trái) vào tòa nhà TTC -> mở link
+    // Dùng handler RIÊNG để không bị removeInputAction() ở các chế độ bên dưới gỡ mất
+    // ---------------------------------------------------------------------------
+    const ttcHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+    // Kiểm tra feature được pick có phải tòa nhà TTC không
+    function isTTCFeature(picked) {
+      if (!Cesium.defined(picked) || typeof picked.getProperty !== "function") {
+        return false;
+      }
+      const id = picked.getProperty("elementId");
+      if (id !== undefined && id !== null) {
+        // elementId có thể là số hoặc chuỗi nên so sánh dạng chuỗi
+        return String(id) === String(TTC.elementId);
+      }
+      // Dự phòng: so khớp theo tọa độ nếu không đọc được elementId
+      const lon = picked.getProperty("cesium#longitude");
+      const lat = picked.getProperty("cesium#latitude");
+      return (
+        Math.abs(lon - TTC["cesium#longitude"]) < 1e-5 &&
+        Math.abs(lat - TTC["cesium#latitude"]) < 1e-5
+      );
+    }
+
+    ttcHandler.setInputAction(function (click) {
+      const picked = viewer.scene.pick(click.position);
+      if (isTTCFeature(picked)) {
+        openTTCLink();
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+
+    // Đổi con trỏ chuột thành bàn tay khi rê vào tòa nhà TTC
+    ttcHandler.setInputAction(function (movement) {
+      const picked = viewer.scene.pick(movement.endPosition);
+      viewer.canvas.style.cursor = isTTCFeature(picked) ? "pointer" : "";
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+    // Styling functions
+
+    // Color by material checks for null values since not all
+    // buildings have the material property.
+    function colorByMaterial() {
+      osmBuildingsTileset.style = new Cesium.Cesium3DTileStyle({
+        defines: {
+          material: "${feature['building:material']}",
+        },
+        color: {
+          conditions: [
+            // Tô nổi bật tòa nhà TTC (elementId có thể là số hoặc chuỗi)
+            [
+              `\${feature['elementId']} === ${TTC.elementId} || \${feature['elementId']} === '${TTC.elementId}'`,
+              "color('red')",
+            ],
+            ["${material} === null", "color('white')"],
+            ["${material} === 'glass'", "color('skyblue', 0.5)"],
+            ["${material} === 'concrete'", "color('grey')"],
+            ["${material} === 'brick'", "color('indianred')"],
+            ["${material} === 'stone'", "color('lightslategrey')"],
+            ["${material} === 'metal'", "color('lightgrey')"],
+            ["${material} === 'steel'", "color('lightsteelblue')"],
+            ["true", "color('white')"], // This is the else case
+          ],
+        },
+      });
+    }
+
+    function highlightAllResidentialBuildings() {
+      osmBuildingsTileset.style = new Cesium.Cesium3DTileStyle({
+        color: {
+          conditions: [
+            [
+              "${feature['building']} === 'apartments' || ${feature['building']} === 'residential'",
+              "color('cyan', 0.9)",
+            ],
+            [true, "color('white')"],
+          ],
+        },
+      });
+    }
+
+    function showByBuildingType(buildingType) {
+      switch (buildingType) {
+        case "office":
+          osmBuildingsTileset.style = new Cesium.Cesium3DTileStyle({
+            show: "${feature['building']} === 'office'",
+          });
+          break;
+        case "apartments":
+          osmBuildingsTileset.style = new Cesium.Cesium3DTileStyle({
+            show: "${feature['building']} === 'apartments'",
+          });
+          break;
+        default:
+          break;
+      }
+    }
+
+    // Color the buildings based on their distance from a selected central location
+    function colorByDistanceToCoordinate(pickedLatitude, pickedLongitude) {
+      osmBuildingsTileset.style = new Cesium.Cesium3DTileStyle({
+        defines: {
+          distance: `distance(vec2(\${feature['cesium#longitude']}, \${feature['cesium#latitude']}), vec2(${pickedLongitude},${pickedLatitude}))`,
+        },
+        color: {
+          conditions: [
+            ["${distance} > 0.014", "color('blue')"],
+            ["${distance} > 0.010", "color('green')"],
+            ["${distance} > 0.006", "color('yellow')"],
+            ["${distance} > 0.0001", "color('red')"],
+            ["true", "color('white')"],
+          ],
+        },
+      });
+    }
+
+    // When dropdown option is not "Color By Distance To Selected Location",
+    // remove the left click input event for selecting a central location
+    function removeCoordinatePickingOnLeftClick() {
+      document.querySelector(".infoPanel").style.visibility = "hidden";
+      handler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    }
+
+    // Add event listeners to dropdown menu options
+    document.querySelector(".infoPanel").style.visibility = "hidden";
+    const menu = document.getElementById("dropdown");
+
+    menu.options[0].onselect = function () {
+      removeCoordinatePickingOnLeftClick();
+      colorByMaterial();
+    };
+
+    menu.options[1].onselect = function () {
+      // Mặc định lấy tòa nhà TTC làm tâm (trước đây là Space Needle ở Seattle)
+      colorByDistanceToCoordinate(
+        TTC["cesium#latitude"],
+        TTC["cesium#longitude"],
+      );
+      document.querySelector(".infoPanel").style.visibility = "visible";
+      // Add left click input to select a building to and extract its coordinates
+      handler.setInputAction(function (movement) {
+        viewer.selectedEntity = undefined;
+        const pickedBuilding = viewer.scene.pick(movement.position);
+        if (pickedBuilding) {
+          const pickedLatitude = pickedBuilding.getProperty("cesium#latitude");
+          const pickedLongitude = pickedBuilding.getProperty("cesium#longitude");
+          colorByDistanceToCoordinate(pickedLatitude, pickedLongitude);
+        }
+      }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    };
+
+    menu.options[2].onselect = function () {
+      removeCoordinatePickingOnLeftClick();
+      highlightAllResidentialBuildings();
+    };
+
+    menu.options[3].onselect = function () {
+      removeCoordinatePickingOnLeftClick();
+      showByBuildingType("office");
+    };
+
+    menu.options[4].onselect = function () {
+      removeCoordinatePickingOnLeftClick();
+      showByBuildingType("apartments");
+    };
+
+    menu.onchange = function () {
+      const item = menu.options[menu.selectedIndex];
+      if (item && typeof item.onselect === "function") {
+        item.onselect();
+      }
+    };
+
+    colorByMaterial();
+  </script>
+</body>
+</html>
